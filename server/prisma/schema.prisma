@@ -1,0 +1,54 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Player {
+  id          String   @id @default(uuid())
+  pirateName  String   @unique
+  passwordHash String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Stats
+  kills       Int      @default(0)
+  deaths      Int      @default(0)
+  gamesWon    Int      @default(0)
+  gamesPlayed Int      @default(0)
+
+  // Participations
+  participations GameParticipant[]
+}
+
+model Game {
+  id          String      @id @default(uuid())
+  status      String      @default("waiting") // waiting | active | complete
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  winnerId    String?
+  turn        Int         @default(1)
+  
+  // Serialised game state (JSON blob – swapped for full Prisma model later)
+  stateJson   String      @db.Text
+
+  participants GameParticipant[]
+}
+
+model GameParticipant {
+  id       String @id @default(uuid())
+  gameId   String
+  playerId String
+  teamSlot Int    @default(0)
+
+  game   Game   @relation(fields: [gameId], references: [id])
+  player Player @relation(fields: [playerId], references: [id])
+
+  @@unique([gameId, playerId])
+}
