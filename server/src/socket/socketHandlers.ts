@@ -1,4 +1,4 @@
-import type { Server, Socket } from 'socket.io';
+﻿import type { Server, Socket } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents } from '@booty-bounties/shared';
 import type { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
@@ -14,6 +14,49 @@ interface Session {
   gameId?: string;
 }
 
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+// Simple in-memory limiter: max AUTH_MAX_ATTEMPTS attempts per AUTH_WINDOW_MS
+const AUTH_MAX_ATTEMPTS = 5;
+const AUTH_WINDOW_MS    = 60_000; // 1 minute
+
+const authAttempts = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(socketId: string): boolean {
+  const now = Date.now();
+  let entry = authAttempts.get(socketId);
+  if (!entry || now >= entry.resetAt) {
+    entry = { count: 0, resetAt: now + AUTH_WINDOW_MS };
+    authAttempts.set(socketId, entry);
+  }
+  entry.count += 1;
+  return entry.count <= AUTH_MAX_ATTEMPTS;
+}
+
+function resetRateLimit(socketId: string): void {
+  authAttempts.delete(socketId);
+}
+
+// ── Input validation ──────────────────────────────────────────────────────────
+const NAME_RE = /^[a-zA-Z0-9 _\-'!.]+$/;
+
+function validatePirateName(name: unknown): string | null {
+  if (typeof name !== 'string') return 'Pirate name must be a string.';
+  const trimmed = name.trim();
+  if (trimmed.length < 2)  return 'Pirate name must be at least 2 characters.';
+  if (trimmed.length > 30) return 'Pirate name is too long (max 30 characters).';
+  if (!NAME_RE.test(trimmed)) return 'Pirate name contains illegal characters.';
+  return null;
+}
+
+function validatePassword(pass: unknown): string | null {
+  if (typeof pass !== 'string') return 'Password must be a string.';
+  if (pass.length < 4)   return 'Password must be at least 4 characters.';
+  if (pass.length > 128) return 'Password is too long (max 128 characters).';
+  return null;
+}
+
+// ── Handler registration ──────────────────────────────────────────────────────
+
 export function registerSocketHandlers(
   io: IOServer,
   gameManager: GameManager,
@@ -23,17 +66,40 @@ export function registerSocketHandlers(
     const session: Session = {};
     console.log(`[Socket] Connect: ${socket.id}`);
 
+    socket.on('disconnect', () => {
+      console.log(`[Socket] Disconnect: ${socket.id}`);
+      resetRateLimit(socket.id);
+    });
+
     // ── Auth ──────────────────────────────────────────────────────────────────
 
     socket.on('auth:login', async ({ pirateName, password }, ack) => {
+      // Rate limit
+      if (!checkRateLimit(socket.id)) {
+        ack({ success: false, error: 'Too many attempts. Please wait a minute, scoundrel!' });
+        return;
+      }
+
+      // Validate inputs
+      const nameErr = validatePirateName(pirateName);
+      if (nameErr) { ack({ success: false, error: nameErr }); return; }
+
+      const passErr = validatePassword(password);
+      if (passErr) { ack({ success: false, error: passErr }); return; }
+
+      const trimmedName = (pirateName as string).trim();
+
       try {
-        let player = await prisma.player.findUnique({ where: { pirateName } });
+        let player = await prisma.player.findUnique({ where: { pirateName: trimmedName } });
 
         if (!player) {
-          // Auto-register
+          // New pirate — register
           const hash = await bcrypt.hash(password, 10);
-          player = await prisma.player.create({ data: { pirateName, passwordHash: hash } });
+          player = await prisma.player.create({
+            data: { pirateName: trimmedName, passwordHash: hash },
+          });
         } else {
+          // Existing pirate — verify password
           const valid = await bcrypt.compare(password, player.passwordHash);
           if (!valid) {
             ack({ success: false, error: 'Wrong password, scoundrel!' });
@@ -41,7 +107,7 @@ export function registerSocketHandlers(
           }
         }
 
-        session.playerId = player.id;
+        session.playerId  = player.id;
         session.pirateName = player.pirateName;
 
         // Rejoin active game if any
@@ -51,10 +117,12 @@ export function registerSocketHandlers(
           await socket.join(existingGameId);
         }
 
+        // Successful auth resets rate limit
+        resetRateLimit(socket.id);
         ack({ success: true, playerId: player.id, pirateName: player.pirateName });
       } catch (err) {
-        console.error(err);
-        ack({ success: false, error: 'Server error' });
+        console.error('[Auth] Database error:', err);
+        ack({ success: false, error: 'A server storm hit! Try again shortly.' });
       }
     });
 
@@ -72,6 +140,9 @@ export function registerSocketHandlers(
 
     socket.on('game:join', ({ gameId }, ack) => {
       if (!session.playerId) { ack({ success: false, error: 'Not logged in' }); return; }
+      if (typeof gameId !== 'string' || gameId.length > 64) {
+        ack({ success: false, error: 'Invalid game ID' }); return;
+      }
       const player = gameManager.addPlayer(gameId, session.playerId, session.pirateName!);
       if (!player) { ack({ success: false, error: 'Could not join game' }); return; }
       session.gameId = gameId;
@@ -87,7 +158,6 @@ export function registerSocketHandlers(
         const state = gameManager.getGame(session.gameId);
         if (state) {
           io.to(session.gameId).emit('game:stateSync', state);
-          // Wire up TurnManager callbacks
           const tm = gameManager.getTurnManager(session.gameId);
           if (tm) {
             tm.onStateUpdate = (gId, st) => {
@@ -104,8 +174,7 @@ export function registerSocketHandlers(
 
     socket.on('game:action', (action, ack) => {
       if (!session.playerId || !session.gameId) {
-        ack({ success: false, error: 'Not in a game' });
-        return;
+        ack({ success: false, error: 'Not in a game' }); return;
       }
       const tm = gameManager.getTurnManager(session.gameId);
       if (!tm) { ack({ success: false, error: 'Game not started' }); return; }
@@ -115,9 +184,7 @@ export function registerSocketHandlers(
 
       if (result.success) {
         const state = gameManager.getGame(session.gameId);
-        if (state) {
-          io.to(session.gameId).emit('game:stateSync', state);
-        }
+        if (state) io.to(session.gameId).emit('game:stateSync', state);
       }
     });
 
@@ -125,12 +192,6 @@ export function registerSocketHandlers(
       if (!session.gameId) return;
       const state = gameManager.getGame(session.gameId);
       if (state) ack(state);
-    });
-
-    // ── Disconnect ────────────────────────────────────────────────────────────
-
-    socket.on('disconnect', () => {
-      console.log(`[Socket] Disconnect: ${socket.id}`);
     });
   });
 }
