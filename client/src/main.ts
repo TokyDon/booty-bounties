@@ -22,4 +22,22 @@ const config: Phaser.Types.Core.GameConfig = {
   },
 };
 
+// ── HiDPI text sharpness patch ─────────────────────────────────────────────
+// Phaser Text objects default to resolution 1, causing blurry text on HiDPI
+// / Retina screens. Patch the factory globally so every this.add.text() call
+// automatically renders at the device's physical pixel ratio.
+const _dpr = window.devicePixelRatio || 1;
+if (_dpr > 1) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const _origText = (Phaser.GameObjects.GameObjectFactory.prototype as any).text as Function;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (Phaser.GameObjects.GameObjectFactory.prototype as any).text = function (
+    x: number, y: number,
+    text: string | string[],
+    style: Phaser.Types.GameObjects.Text.TextStyle = {},
+  ) {
+    return _origText.call(this, x, y, text, { resolution: _dpr, ...style });
+  };
+}
+
 new Phaser.Game(config);
