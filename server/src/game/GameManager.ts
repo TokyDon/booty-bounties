@@ -83,7 +83,7 @@ export class GameManager {
     player.isReady = true;
 
     const players = Object.values(state.players);
-    if (players.length >= 2 && players.every((p) => p.isReady)) {
+    if (players.length >= 1 && players.every((p) => p.isReady)) {
       this.startGame(gameId);
     }
     return true;

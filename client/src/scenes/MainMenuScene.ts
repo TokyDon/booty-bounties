@@ -307,9 +307,7 @@ export class MainMenuScene extends Phaser.Scene {
 
     const handleRes = (res: { success: boolean; playerId?: string; pirateName?: string; error?: string }) => {
       if (res.success) {
-        this.scene.start('GameScene', { playerId: res.playerId, pirateName: res.pirateName });
-        this.scene.start('UIScene', { playerId: res.playerId, pirateName: res.pirateName });
-        this.scene.stop();
+        this.scene.start('LobbyScene', { playerId: res.playerId, pirateName: res.pirateName });
       } else {
         this.errorText.setText(res.error ?? 'Something went wrong. Try again.');
         lbl.setText(this.mode === 'login' ? 'SET SAIL  ⚓' : 'JOIN THE CREW  ⚓');

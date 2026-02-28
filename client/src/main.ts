@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { BootScene } from './scenes/BootScene';
 import { MainMenuScene } from './scenes/MainMenuScene';
+import { LobbyScene } from './scenes/LobbyScene';
 import { GameScene } from './scenes/GameScene';
 import { UIScene } from './scenes/UIScene';
 
@@ -10,7 +11,7 @@ const config: Phaser.Types.Core.GameConfig = {
   height: 720,
   parent: 'game-container',
   backgroundColor: '#070f1e',
-  scene: [BootScene, MainMenuScene, GameScene, UIScene],
+  scene: [BootScene, MainMenuScene, LobbyScene, GameScene, UIScene],
   dom: { createContainer: true },
   scale: {
     mode: Phaser.Scale.FIT,
