@@ -1,5 +1,7 @@
 # Booty & Bounties
 
+> Last updated from laptop (MacBook) — 9 March 2026
+
 A persistent multiplayer pirate naval combat game. Sail the high seas, upgrade your ship, and be the first pirate to earn ALL gold upgrades to win!
 
 ## Game Overview
